@@ -9,12 +9,14 @@ import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -28,8 +30,12 @@ public class ReservationController {
     @PostMapping
     public ResponseEntity<ReservationResponse> createReservation(
             Authentication authentication,
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String authorizationHeader,
             @Valid @RequestBody ReservationRequest request) {
-        ReservationResponse response = reservationService.createReservation(getAuthenticatedEmail(authentication), request);
+        ReservationResponse response = reservationService.createReservation(
+                getAuthenticatedEmail(authentication),
+                authorizationHeader,
+                request);
         return ResponseEntity
                 .created(URI.create("/reservations/" + response.getId()))
                 .body(response);
@@ -58,8 +64,12 @@ public class ReservationController {
     @PostMapping("/{id}/cancel")
     public ResponseEntity<ReservationResponse> cancelReservation(
             Authentication authentication,
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String authorizationHeader,
             @PathVariable Long id) {
-        return ResponseEntity.ok(reservationService.cancelReservation(getAuthenticatedEmail(authentication), id));
+        return ResponseEntity.ok(reservationService.cancelReservation(
+                getAuthenticatedEmail(authentication),
+                authorizationHeader,
+                id));
     }
 
     private String getAuthenticatedEmail(Authentication authentication) {

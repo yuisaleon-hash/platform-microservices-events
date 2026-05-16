@@ -1,8 +1,10 @@
 package com.events.eventservice.service;
 
+import com.events.eventservice.dto.EventAvailabilityResponse;
 import com.events.eventservice.dto.EventRequest;
 import com.events.eventservice.dto.EventResponse;
 import com.events.eventservice.entity.Event;
+import com.events.eventservice.entity.EventStatus;
 import com.events.eventservice.repository.EventRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +49,12 @@ public class EventService {
         return toResponse(event);
     }
 
+    @Transactional(readOnly = true)
+    public EventAvailabilityResponse getAvailability(Long id) {
+        Event event = findEventById(id);
+        return toAvailabilityResponse(event);
+    }
+
     @Transactional
     public EventResponse updateEvent(Long id, EventRequest request) {
         Event event = findEventById(id);
@@ -68,6 +76,39 @@ public class EventService {
         eventRepository.delete(event);
     }
 
+    @Transactional
+    public EventAvailabilityResponse reserveCapacity(Long id, Integer quantity) {
+        Event event = findEventById(id);
+
+        if (event.getStatus() != EventStatus.ACTIVE) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Event is not active");
+        }
+
+        if (event.getAvailableCapacity() < quantity) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Insufficient event capacity");
+        }
+
+        event.setAvailableCapacity(event.getAvailableCapacity() - quantity);
+        if (event.getAvailableCapacity() == 0) {
+            event.setStatus(EventStatus.SOLD_OUT);
+        }
+
+        return toAvailabilityResponse(eventRepository.save(event));
+    }
+
+    @Transactional
+    public EventAvailabilityResponse releaseCapacity(Long id, Integer quantity) {
+        Event event = findEventById(id);
+        int restoredCapacity = Math.min(event.getAvailableCapacity() + quantity, event.getTotalCapacity());
+        event.setAvailableCapacity(restoredCapacity);
+
+        if (event.getStatus() == EventStatus.SOLD_OUT && restoredCapacity > 0) {
+            event.setStatus(EventStatus.ACTIVE);
+        }
+
+        return toAvailabilityResponse(eventRepository.save(event));
+    }
+
     private Event findEventById(Long id) {
         return eventRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Event not found"));
@@ -84,6 +125,14 @@ public class EventService {
                 .totalCapacity(event.getTotalCapacity())
                 .availableCapacity(event.getAvailableCapacity())
                 .status(event.getStatus())
+                .build();
+    }
+
+    private EventAvailabilityResponse toAvailabilityResponse(Event event) {
+        return EventAvailabilityResponse.builder()
+                .eventId(event.getId())
+                .availableCapacity(event.getAvailableCapacity())
+                .available(event.getStatus() == EventStatus.ACTIVE && event.getAvailableCapacity() > 0)
                 .build();
     }
 }
