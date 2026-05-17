@@ -1,25 +1,224 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: platform-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_MULTIPLE_DATABASES: ${POSTGRES_MULTIPLE_DATABASES:-auth_db,event_service_db,reservation_service_db}
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - platform-network
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
     container_name: platform-zookeeper
+    restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
+    expose:
+      - "2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD-SHELL", "echo srvr | nc localhost 2181 | grep Mode"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - platform-network
 
   kafka:
     image: confluentinc/cp-kafka:7.6.1
     container_name: platform-kafka
+    restart: unless-stopped
     depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
+      zookeeper:
+        condition: service_healthy
+    expose:
+      - "29092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server kafka:29092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - platform-network
+
+  auth-service:
+    build:
+      context: ./auth-service
+    image: platform-auth-service:local
+    container_name: platform-auth-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8080
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      AUTH_DB_NAME: ${AUTH_DB_NAME:-auth_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      JWT_SECRET: ${JWT_SECRET:-TXlTdXBlclNlY3JldEtleUZvckF1dGhTZXJ2aWNlSldUMjAyNg==}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
+      APP_KAFKA_ENABLED: true
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/health | grep OK"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - platform-network
+
+  event-service:
+    build:
+      context: ./event-service
+    image: platform-event-service:local
+    container_name: platform-event-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8081
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      EVENT_DB_NAME: ${EVENT_DB_NAME:-event_service_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      JWT_SECRET: ${JWT_SECRET:-TXlTdXBlclNlY3JldEtleUZvckF1dGhTZXJ2aWNlSldUMjAyNg==}
+      APP_KAFKA_ENABLED: true
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    expose:
+      - "8081"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/health | grep OK"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - platform-network
+
+  reservation-service:
+    build:
+      context: ./reservation-service
+    image: platform-reservation-service:local
+    container_name: platform-reservation-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      event-service:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8082
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      RESERVATION_DB_NAME: ${RESERVATION_DB_NAME:-reservation_service_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      JWT_SECRET: ${JWT_SECRET:-TXlTdXBlclNlY3JldEtleUZvckF1dGhTZXJ2aWNlSldUMjAyNg==}
+      EVENT_SERVICE_URL: http://event-service:8081
+      APP_KAFKA_ENABLED: true
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    expose:
+      - "8082"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8082/health | grep OK"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - platform-network
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+    image: platform-api-gateway:local
+    container_name: platform-api-gateway
+    restart: unless-stopped
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      event-service:
+        condition: service_healthy
+      reservation-service:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8085
+      JWT_SECRET: ${JWT_SECRET:-TXlTdXBlclNlY3JldEtleUZvckF1dGhTZXJ2aWNlSldUMjAyNg==}
+      AUTH_SERVICE_URL: http://auth-service:8080
+      EVENT_SERVICE_URL: http://event-service:8081
+      RESERVATION_SERVICE_URL: http://reservation-service:8082
+      RATE_LIMIT_AUTH_CAPACITY: ${RATE_LIMIT_AUTH_CAPACITY:-5}
+      RATE_LIMIT_AUTH_REFILL_PERIOD_SECONDS: ${RATE_LIMIT_AUTH_REFILL_PERIOD_SECONDS:-60}
+      RATE_LIMIT_API_CAPACITY: ${RATE_LIMIT_API_CAPACITY:-30}
+      RATE_LIMIT_API_REFILL_PERIOD_SECONDS: ${RATE_LIMIT_API_REFILL_PERIOD_SECONDS:-60}
+    ports:
+      - "${API_GATEWAY_PORT:-8085}:8085"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8085/health | grep OK"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - platform-network
+
+networks:
+  platform-network:
+    name: platform-network
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: platform-postgres-data
+  zookeeper_data:
+    name: platform-zookeeper-data
+  zookeeper_log:
+    name: platform-zookeeper-log
+  kafka_data:
+    name: platform-kafka-data

@@ -32,6 +32,8 @@ public class SecurityConfig {
                 )
 
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/health").permitAll()
+
                         .requestMatchers(HttpMethod.GET, "/reservations/**")
                         .hasAnyAuthority("ROLE_USER", "ROLE_ADMIN")
 

@@ -36,6 +36,7 @@ public class SecurityConfig {
 							return Mono.empty();
 						}))
 				.authorizeExchange(exchanges -> exchanges
+						.pathMatchers("/health").permitAll()
 						.pathMatchers(HttpMethod.POST, "/auth/login", "/auth/register").permitAll()
 						.pathMatchers("/events/**").authenticated()
 						.pathMatchers("/reservations/**").authenticated()

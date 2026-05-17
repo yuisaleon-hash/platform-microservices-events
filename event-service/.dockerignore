@@ -1,0 +1,13 @@
+target/
+.idea/
+.git/
+logs/
+*.log
+.env
+.env.*
+*.tmp
+*.temp
+*.swp
+*.swo
+Thumbs.db
+.DS_Store

@@ -53,7 +53,8 @@ public class JwtAuthenticationFilter implements WebFilter {
 	private boolean isPublicRoute(ServerWebExchange exchange) {
 		String path = exchange.getRequest().getPath().pathWithinApplication().value();
 		HttpMethod method = exchange.getRequest().getMethod();
-		return HttpMethod.POST.equals(method)
+		return (HttpMethod.GET.equals(method) && "/health".equals(path))
+				|| HttpMethod.POST.equals(method)
 				&& ("/auth/login".equals(path) || "/auth/register".equals(path));
 	}
 
